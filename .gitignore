@@ -1,0 +1,7 @@
+# Environment variables
+
+.env
+
+# ChromaDB vector database
+
+chroma_langchain_db/
