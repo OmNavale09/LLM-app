@@ -1,232 +1,348 @@
+# Instructions on how to play the game:
+# ------------------------------------
+# Title: Dino Dash
+# Objective: Control a small dinosaur character, jumping over incoming cacti and pterodactyls to survive for as long as possible and achieve the highest score.
+#
+# Controls:
+# - Press the 'SPACEBAR' or 'UP ARROW KEY' to make the dinosaur jump.
+#   You cannot double jump; you must land on the ground before jumping again.
+#
+# Gameplay:
+# - Your dinosaur runs automatically from left to right.
+# - Obstacles (cacti and flying pterodactyls) will appear and scroll towards you.
+# - Jump over cacti.
+# - Jump over or duck under pterodactyls depending on their height.
+# - The game speed and obstacle frequency will gradually increase, making it more challenging.
+#
+# Scoring:
+# - You earn points for every second you survive.
+# - Your current score is displayed at the top right of the screen.
+#
+# Game Over:
+# - If your dinosaur collides with any obstacle, the game ends.
+# - Your final score will be displayed.
+# - To restart the game, press the 'R' key.
+# ------------------------------------
+
 import pygame
 import sys
 import random
 
-# Initialize Pygame
+# --- Game Initialization ---
 pygame.init()
 
-# Game Constants
+# --- Constants ---
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 400
-GROUND_HEIGHT = 50
-PLAYER_WIDTH = 30
-PLAYER_HEIGHT = 50
-OBSTACLE_WIDTH = 20
-OBSTACLE_HEIGHT_MIN = 30
-OBSTACLE_HEIGHT_MAX = 70
-GAP_WIDTH_MIN = 80
-GAP_WIDTH_MAX = 150
-# Spacing between the end of one obstacle/gap and the start of the next one
-MIN_GAP_BETWEEN_OBSTACLES = 150
-MAX_GAP_BETWEEN_OBSTACLES = 300
-PLAYER_X = 100  # Fixed X position for the player
-INITIAL_GAME_SPEED = 5.0 # Use float for gradual speed increase
-GRAVITY = 0.8
-JUMP_VELOCITY = -15  # Initial upward velocity for jump
-FPS = 60
+GROUND_HEIGHT = 50  # Height of the ground plane
+DINO_HEIGHT = 60
+DINO_WIDTH = 40
 
 # Colors
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-GREEN = (0, 255, 0)
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
-LIGHT_BLUE = (173, 216, 230) # Background sky color
+WHITE = (255, 255, 255)  # Background color (desert sky)
+BLACK = (0, 0, 0)      # Color for cacti and text
+GREEN = (0, 150, 0)    # Color for the ground
+GRAY = (150, 150, 150)  # Color for the dinosaur
+RED = (200, 0, 0)      # Color for pterodactyls
+BROWN = (139, 69, 19)  # Color for ground detail
 
-# Set up the display
+# Game properties
+FPS = 60
+INITIAL_GAME_SPEED = 5  # Initial speed at which obstacles and ground move
+GRAVITY = 0.8           # Gravity applied to the dinosaur
+JUMP_VELOCITY = -15     # Initial upward velocity when jumping
+
+# Obstacle properties
+MIN_CACTUS_WIDTH = 20
+MAX_CACTUS_WIDTH = 40
+MIN_CACTUS_HEIGHT = 40
+MAX_CACTUS_HEIGHT = 80
+
+MIN_PTERO_WIDTH = 50
+MAX_PTERO_WIDTH = 70
+MIN_PTERO_HEIGHT = 30
+MAX_PTERO_HEIGHT = 40
+# Pterodactyls can fly at different fixed heights
+# These levels require the player to jump over them.
+PTERO_Y_LEVELS = [SCREEN_HEIGHT - GROUND_HEIGHT - 100, SCREEN_HEIGHT - GROUND_HEIGHT - 150] 
+
+# Scoring
+SCORE_INCREMENT_INTERVAL = 1000  # Milliseconds per point (1000ms = 1 point per second as per design)
+
+# Speed increase over time
+SPEED_INCREASE_INTERVAL = 5000  # Milliseconds after which game speed increases
+SPEED_INCREASE_AMOUNT = 0.5     # Amount to increase game speed by
+
+# --- Screen Setup ---
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Pixel Jumper")
-
-# Clock for controlling frame rate
+pygame.display.set_caption("Dino Dash")
 clock = pygame.time.Clock()
 
-# Font for score and game over messages
-font = pygame.font.Font(None, 36)
-game_over_font = pygame.font.Font(None, 72)
+# --- Fonts ---
+font = pygame.font.Font(None, 36)          # Standard font for score
+game_over_font = pygame.font.Font(None, 60) # Larger font for game over
+restart_font = pygame.font.Font(None, 28)  # Smaller font for restart instructions
 
-# Player Class
-class Player(pygame.sprite.Sprite):
+# --- Game Variables ---
+game_over = False
+score = 0
+current_game_speed = INITIAL_GAME_SPEED
+last_score_time = pygame.time.get_ticks()        # Tracks time for score increment
+last_speed_increase_time = pygame.time.get_ticks() # Tracks time for speed increase
+
+# --- Classes ---
+class Dino:
+    """Represents the player-controlled dinosaur."""
     def __init__(self):
-        super().__init__()
-        self.image = pygame.Surface([PLAYER_WIDTH, PLAYER_HEIGHT])
-        self.image.fill(BLUE)
-        self.rect = self.image.get_rect()
-        self.rect.x = PLAYER_X
-        # Player starts on the ground
-        self.rect.y = SCREEN_HEIGHT - GROUND_HEIGHT - PLAYER_HEIGHT
-        self.y_velocity = 0
+        # Position the dino on the ground
+        self.rect = pygame.Rect(50, SCREEN_HEIGHT - GROUND_HEIGHT - DINO_HEIGHT, DINO_WIDTH, DINO_HEIGHT)
+        self.color = GRAY
         self.is_jumping = False
-        self.is_falling = False
-
-    def update(self):
-        # Apply gravity to simulate falling
-        self.y_velocity += GRAVITY
-        self.rect.y += self.y_velocity
-
-        # Ground collision logic
-        if self.rect.y >= SCREEN_HEIGHT - GROUND_HEIGHT - PLAYER_HEIGHT:
-            self.rect.y = SCREEN_HEIGHT - GROUND_HEIGHT - PLAYER_HEIGHT
-            self.y_velocity = 0
-            self.is_jumping = False
-            self.is_falling = False
-        elif self.y_velocity > 0: # Player is moving downwards
-            self.is_falling = True
-            self.is_jumping = False
-        elif self.y_velocity < 0: # Player is moving upwards
-            self.is_falling = False
-            self.is_jumping = True
+        self.jump_velocity = 0
+        self.on_ground = True  # True if the dino is currently on the ground
 
     def jump(self):
-        # Allow jump only if player is on the ground and not already jumping/falling
-        if self.rect.y == SCREEN_HEIGHT - GROUND_HEIGHT - PLAYER_HEIGHT and self.y_velocity == 0:
+        """Initiates a jump if the dino is on the ground."""
+        if self.on_ground:
             self.is_jumping = True
-            self.is_falling = False # Ensure not falling when starting a jump
-            self.y_velocity = JUMP_VELOCITY # Give upward velocity
-
-# Obstacle Class (for spike blocks and gaps)
-class Obstacle(pygame.sprite.Sprite):
-    def __init__(self, x, width, height, is_gap=False):
-        super().__init__()
-        self.is_gap = is_gap
-        if not self.is_gap:
-            # Spike block: visible, solid, positioned on the ground
-            self.image = pygame.Surface([width, height])
-            self.image.fill(RED)
-            self.rect = self.image.get_rect()
-            self.rect.x = x
-            # Position spike blocks on top of the ground
-            self.rect.y = SCREEN_HEIGHT - GROUND_HEIGHT - height
-        else:
-            # Gap: invisible, represents missing ground. Its rect defines the "hole" area.
-            # Using SRCALPHA makes the surface transparent.
-            self.image = pygame.Surface([width, height], pygame.SRCALPHA) 
-            self.image.fill((0,0,0,0)) # Completely transparent
-            self.rect = self.image.get_rect()
-            self.rect.x = x
-            # Gaps effectively occupy the ground space for collision detection
-            self.rect.y = SCREEN_HEIGHT - GROUND_HEIGHT
+            self.jump_velocity = JUMP_VELOCITY
+            self.on_ground = False  # Dino is no longer on the ground
 
     def update(self):
-        self.rect.x -= GAME_SPEED
-        # Remove obstacle if it moves off-screen to the left
-        if self.rect.right < 0:
-            self.kill() # Removes the sprite from all groups it belongs to
+        """Updates the dino's position, applying gravity."""
+        if self.is_jumping:
+            self.rect.y += self.jump_velocity
+            self.jump_velocity += GRAVITY
 
-# Game Variables (initialized for the first game)
-player = Player()
-obstacles = pygame.sprite.Group()
-score = 0
-game_over = False
-distance_travelled = 0
-# `next_obstacle_spawn_x` tracks the minimum X coordinate where the next obstacle can begin.
-# This ensures proper spacing between consecutive obstacles.
-next_obstacle_spawn_x = SCREEN_WIDTH 
-GAME_SPEED = INITIAL_GAME_SPEED
+            # Check if dino has landed back on the ground
+            if self.rect.y >= SCREEN_HEIGHT - GROUND_HEIGHT - self.rect.height:
+                self.rect.y = SCREEN_HEIGHT - GROUND_HEIGHT - self.rect.height # Snap to ground
+                self.is_jumping = False
+                self.jump_velocity = 0
+                self.on_ground = True # Dino is back on the ground
 
+    def draw(self, surface):
+        """Draws the dino on the screen with a simple body and eye."""
+        # Main body
+        pygame.draw.rect(surface, self.color, self.rect)
+        # Simple eye for character
+        eye_x = self.rect.x + self.rect.width * 3 // 4
+        eye_y = self.rect.y + self.rect.height // 4
+        pygame.draw.circle(surface, BLACK, (eye_x, eye_y), 3)
+
+class Ground:
+    """Represents the scrolling ground plane."""
+    def __init__(self):
+        # Two segments for seamless scrolling
+        self.segment1_rect = pygame.Rect(0, SCREEN_HEIGHT - GROUND_HEIGHT, SCREEN_WIDTH, GROUND_HEIGHT)
+        self.segment2_rect = pygame.Rect(SCREEN_WIDTH, SCREEN_HEIGHT - GROUND_HEIGHT, SCREEN_WIDTH, GROUND_HEIGHT)
+        self.color = GREEN
+
+    def update(self, speed):
+        """Moves the ground segments to the left."""
+        self.segment1_rect.x -= speed
+        self.segment2_rect.x -= speed
+
+        # Reset segments when they move completely off-screen to the left
+        if self.segment1_rect.right < 0:
+            self.segment1_rect.left = self.segment2_rect.right
+        if self.segment2_rect.right < 0:
+            self.segment2_rect.left = self.segment1_rect.right
+
+    def draw(self, surface):
+        """Draws both ground segments on the screen with simple texture."""
+        pygame.draw.rect(surface, self.color, self.segment1_rect)
+        pygame.draw.rect(surface, self.color, self.segment2_rect)
+
+        # Add simple texture/lines to the ground for visual effect
+        for rect in [self.segment1_rect, self.segment2_rect]:
+            # Draw a few horizontal lines for a 'sandy' texture
+            pygame.draw.line(surface, BROWN, (rect.x, rect.y + 10), (rect.x + rect.width, rect.y + 10), 1)
+            pygame.draw.line(surface, BROWN, (rect.x, rect.y + 20), (rect.x + rect.width, rect.y + 20), 1)
+            pygame.draw.line(surface, BROWN, (rect.x, rect.y + 30), (rect.x + rect.width, rect.y + 30), 1)
+
+
+class Obstacle:
+    """Base class for all obstacles."""
+    def __init__(self, x, y, width, height, color):
+        self.rect = pygame.Rect(x, y, width, height)
+        self.color = color
+
+    def update(self, speed):
+        """Moves the obstacle to the left."""
+        self.rect.x -= speed
+
+    def draw(self, surface):
+        """Draws the obstacle on the screen. To be overridden by subclasses for custom shapes."""
+        pygame.draw.rect(surface, self.color, self.rect) # Default drawing for simple obstacles
+
+class Cactus(Obstacle):
+    """Represents a cactus obstacle with a slightly more distinct shape."""
+    def __init__(self):
+        width = random.randint(MIN_CACTUS_WIDTH, MAX_CACTUS_WIDTH)
+        height = random.randint(MIN_CACTUS_HEIGHT, MAX_CACTUS_HEIGHT)
+        # Position at the right edge of the screen, sitting on the ground
+        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT - GROUND_HEIGHT - height, width, height, BLACK)
+    
+    def draw(self, surface):
+        """Draws a cactus with a main body and two small arms."""
+        # Main body of the cactus
+        pygame.draw.rect(surface, self.color, self.rect)
+        # Add a couple of "arms" to make it look more like a cactus
+        arm_width = self.rect.width // 3
+        arm_height = self.rect.height // 3
+        
+        # Left arm
+        pygame.draw.rect(surface, self.color, 
+                         (self.rect.x - arm_width // 2, self.rect.y + arm_height, arm_width, arm_height))
+        # Right arm
+        pygame.draw.rect(surface, self.color, 
+                         (self.rect.x + self.rect.width - arm_width // 2, self.rect.y + arm_height * 2 // 3, arm_width, arm_height))
+
+
+class Pterodactyl(Obstacle):
+    """Represents a flying pterodactyl obstacle with a simple body and wings."""
+    def __init__(self):
+        width = random.randint(MIN_PTERO_WIDTH, MAX_PTERO_WIDTH)
+        height = random.randint(MIN_PTERO_HEIGHT, MAX_PTERO_HEIGHT)
+        # Choose a random flying height
+        y_pos = random.choice(PTERO_Y_LEVELS)
+        # Position at the right edge of the screen at the chosen height
+        super().__init__(SCREEN_WIDTH, y_pos, width, height, RED)
+
+    def draw(self, surface):
+        """Draws the pterodactyl with a simple body rectangle and two wing rectangles."""
+        # Main body (smaller rectangle in the center)
+        body_width = self.rect.width // 2
+        body_height = self.rect.height
+        body_rect = pygame.Rect(self.rect.x + self.rect.width // 4, self.rect.y, body_width, body_height)
+        pygame.draw.rect(surface, self.color, body_rect) # Fix: use pygame.draw.rect
+
+        # Wings (two smaller rectangles on either side of the body)
+        wing_width = self.rect.width // 2.5
+        wing_height = self.rect.height // 2
+        
+        # Left wing
+        pygame.draw.rect(surface, self.color, 
+                         (self.rect.x - wing_width + self.rect.width // 4, self.rect.y + wing_height // 2, wing_width, wing_height))
+        # Right wing
+        pygame.draw.rect(surface, self.color, 
+                         (self.rect.x + self.rect.width // 2, self.rect.y + wing_height // 2, wing_width, wing_height))
+
+
+# --- Game Objects ---
+player = Dino()
+ground = Ground()
+obstacles = [] # List to hold current obstacles on screen
+
+# Obstacle generation variables
+next_obstacle_time = pygame.time.get_ticks() # Time when the next obstacle should spawn
+obstacle_min_delay = 1000 # Minimum delay (ms) between obstacles
+obstacle_max_delay = 2000 # Maximum delay (ms) between obstacles
+
+# --- Game Functions ---
 def reset_game():
-    """Resets all game variables to their initial state for a new game."""
-    global player, obstacles, score, game_over, distance_travelled, next_obstacle_spawn_x, GAME_SPEED
-    player = Player()
-    obstacles.empty() # Clear all existing obstacles
-    score = 0
+    """Resets all game variables and objects to their initial state."""
+    global game_over, score, current_game_speed, last_score_time, last_speed_increase_time, next_obstacle_time
     game_over = False
-    distance_travelled = 0
-    next_obstacle_spawn_x = SCREEN_WIDTH # Reset for new game
-    GAME_SPEED = INITIAL_GAME_SPEED # Reset speed to initial value
+    score = 0
+    current_game_speed = INITIAL_GAME_SPEED
+    last_score_time = pygame.time.get_ticks()
+    last_speed_increase_time = pygame.time.get_ticks()
+    
+    # Reset player state
+    player.rect.y = SCREEN_HEIGHT - GROUND_HEIGHT - DINO_HEIGHT
+    player.is_jumping = False
+    player.jump_velocity = 0
+    player.on_ground = True
+    
+    obstacles.clear() # Clear all existing obstacles
+    
+    # Set the time for the first obstacle after reset
+    next_obstacle_time = pygame.time.get_ticks() + random.randint(obstacle_min_delay, obstacle_max_delay)
 
 # --- Main Game Loop ---
-running = True
-while running:
-    # Event handling
+while True:
+    # --- Event Handling ---
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
-            running = False
+            pygame.quit()
+            sys.exit() # Exit the game gracefully
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE or event.key == pygame.K_UP:
+                if not game_over:
+                    player.jump() # Allow jump only if game is not over
+            if event.key == pygame.K_r:
                 if game_over:
-                    reset_game() # Restart the game if it's over
-                else:
-                    player.jump() # Make the player jump
+                    reset_game() # Allow restart only if game is over
 
     if not game_over:
-        # Update game elements
+        # --- Update Game State ---
         player.update()
-        obstacles.update()
+        ground.update(current_game_speed)
 
-        # Obstacle generation logic
-        # Spawn a new obstacle only when there's enough space since the last one.
-        # This prevents obstacles from spawning too close to each other, ensuring a clear gap.
-        if SCREEN_WIDTH >= next_obstacle_spawn_x:
-            # Determine the type of obstacle to spawn randomly
-            choice = random.choice(["spike", "gap"])
-            new_obstacle = None
+        # Obstacle Generation Logic
+        now = pygame.time.get_ticks()
+        if now >= next_obstacle_time:
+            # Randomly decide between spawning a Cactus or a Pterodactyl
+            if random.randint(0, 1) == 0: # 0 for Cactus
+                obstacles.append(Cactus())
+            else: # 1 for Pterodactyl
+                obstacles.append(Pterodactyl())
             
-            if choice == "spike":
-                obs_height = random.randint(OBSTACLE_HEIGHT_MIN, OBSTACLE_HEIGHT_MAX)
-                # Obstacles always start at the right edge of the screen
-                new_obstacle = Obstacle(SCREEN_WIDTH, OBSTACLE_WIDTH, obs_height)
-            elif choice == "gap":
-                gap_width = random.randint(GAP_WIDTH_MIN, GAP_WIDTH_MAX)
-                # Gaps have a height equal to GROUND_HEIGHT so their rect covers the ground area
-                new_obstacle = Obstacle(SCREEN_WIDTH, gap_width, GROUND_HEIGHT, is_gap=True)
-            
-            if new_obstacle:
-                obstacles.add(new_obstacle)
-                # Calculate the next spawn point: current obstacle's right edge + a random gap
-                next_obstacle_spawn_x = new_obstacle.rect.right + random.randint(MIN_GAP_BETWEEN_OBSTACLES, MAX_GAP_BETWEEN_OBSTACLES)
+            # Set time for the next obstacle spawn
+            next_obstacle_time = now + random.randint(obstacle_min_delay, obstacle_max_delay)
 
-        # Collision detection
+        # Update and remove obstacles that have moved off-screen
+        # Use list(obstacles) to iterate over a copy, allowing modification of original list
+        for obstacle in list(obstacles):
+            obstacle.update(current_game_speed)
+            if obstacle.rect.right < 0:
+                obstacles.remove(obstacle)
+
+        # Collision Detection
         for obstacle in obstacles:
             if player.rect.colliderect(obstacle.rect):
-                if not obstacle.is_gap:
-                    # Collision with a visible spike block results in game over
-                    game_over = True
-                else:
-                    # Collision with a gap: player falls into it if not successfully jumping over.
-                    # This occurs if player's bottom hits or goes below ground level while inside the gap's X range.
-                    if player.rect.bottom >= SCREEN_HEIGHT - GROUND_HEIGHT:
-                        game_over = True
-        
-        # Score update: based on distance travelled
-        distance_travelled += GAME_SPEED
-        score = int(distance_travelled // 10) # 1 point per 10 pixels
+                game_over = True # End the game upon collision
 
-        # Difficulty scaling: gradually increase game speed
-        # This triggers every 1000 pixels travelled, increasing speed by 0.1
-        if distance_travelled % 1000 < GAME_SPEED and distance_travelled > 0: # Check avoids continuous increment for one block
-            GAME_SPEED += 0.1
+        # Score Update
+        if now - last_score_time >= SCORE_INCREMENT_INTERVAL:
+            score += 1
+            last_score_time = now
+
+        # Increase Game Speed Over Time
+        if now - last_speed_increase_time >= SPEED_INCREASE_INTERVAL:
+            current_game_speed += SPEED_INCREASE_AMOUNT
+            last_speed_increase_time = now
 
     # --- Drawing ---
-    screen.fill(LIGHT_BLUE) # Background color (sky)
+    screen.fill(WHITE) # Fill the background with white (desert sky)
 
-    # Draw ground
-    pygame.draw.rect(screen, GREEN, (0, SCREEN_HEIGHT - GROUND_HEIGHT, SCREEN_WIDTH, GROUND_HEIGHT))
+    ground.draw(screen)
+    player.draw(screen)
+    for obstacle in obstacles:
+        obstacle.draw(screen)
 
-    # Draw obstacles (only visible spike blocks, gaps are invisible)
-    for obs in obstacles:
-        if not obs.is_gap:
-            screen.blit(obs.image, obs.rect)
-
-    # Draw player
-    screen.blit(player.image, player.rect)
-
-    # Draw score
+    # Display Current Score
     score_text = font.render(f"Score: {score}", True, BLACK)
-    screen.blit(score_text, (10, 10))
+    # Position score at the top right
+    screen.blit(score_text, (SCREEN_WIDTH - score_text.get_width() - 10, 10))
 
-    # Display Game Over message and restart prompt
     if game_over:
+        # Display Game Over message
         game_over_text = game_over_font.render("GAME OVER", True, BLACK)
-        restart_text = font.render("Press SPACE to Restart", True, BLACK)
-        screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, SCREEN_HEIGHT // 2 - 50))
-        screen.blit(restart_text, (SCREEN_WIDTH // 2 - restart_text.get_width() // 2, SCREEN_HEIGHT // 2 + 20))
+        game_over_rect = game_over_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 30))
+        screen.blit(game_over_text, game_over_rect)
 
-    # Update the display
-    pygame.display.flip()
+        # Display Final Score
+        final_score_text = font.render(f"Final Score: {score}", True, BLACK)
+        final_score_rect = final_score_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 10))
+        screen.blit(final_score_text, final_score_rect)
 
-    # Cap the frame rate
-    clock.tick(FPS)
+        # Display Restart Instruction
+        restart_text = restart_font.render("Press 'R' to Restart", True, BLACK)
+        restart_rect = restart_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 50))
+        screen.blit(restart_text, restart_rect)
 
-# Quit Pygame
-pygame.quit()
-sys.exit()
+    pygame.display.flip() # Update the full display Surface to the screen
+    clock.tick(FPS)       # Control the game's frame rate
